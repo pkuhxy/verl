@@ -114,6 +114,12 @@ class RLHFDataset(Dataset):
         self.filter_overlong_prompts = config.get("filter_overlong_prompts", True)
         self.apply_chat_template_kwargs = config.get("apply_chat_template_kwargs", {})
 
+        self.video_total_pixels = config.get("video_total_pixels", 115200 * 32 * 32)
+        self.video_max_pixels = config.get("video_max_pixels", 768 * 32 * 32)
+        self.video_min_pixels = config.get("video_min_pixels", 128 * 32 * 32)
+        self.max_frames = config.get("max_frames", 768)
+        self.fps = config.get("fps", 1.0)
+
         self.tool_config_path = config.get("tool_config_path", None)
         self.tool_schemas = None
         if self.tool_config_path:
@@ -323,7 +329,16 @@ class RLHFDataset(Dataset):
                     image_offset += 1
                 elif segment == "<video>":
                     assert video_offset < len(videos), f"video_offset {video_offset} >= len(videos) {len(videos)}"
-                    content_list.append({"type": "video", "video": videos[video_offset]})
+                    visual_dict = {
+                        "type": "video",
+                        "video": videos[video_offset],
+                        "min_pixels": self.video_min_pixels,
+                        "max_pixels": self.video_max_pixels,
+                        "total_pixels": self.video_total_pixels,
+                        "max_frames": self.max_frames,
+                        "fps": self.fps,
+                    }
+                    content_list.append(visual_dict)
                     video_offset += 1
                 else:
                     content_list.append({"type": "text", "text": segment})
@@ -379,16 +394,69 @@ class RLHFDataset(Dataset):
         Args:
             messages: List of messages from dataset `raw_prompt`.
             image_patch_size: Image patch size for processor.
-            config: Config for dataset.
+            config: Config for dataset. Supports the following vision-related options:
+                - min_pixels: Minimum pixels for video frame.
+                - max_pixels: Maximum pixels for video frame.
+                - total_pixels: Total pixels budget for the video.
+                - max_frames: Maximum number of frames to extract.
+                - fps: FPS for video sampling.
 
         Returns:
             images: List of images.
             videos: List of videos, each video is a tuple of (video_tensor, video_metadata).
         """
-        from qwen_vl_utils import process_vision_info
+        from verl.utils.dataset.vision_utils import process_image, process_video
 
-        images, videos = process_vision_info(messages, image_patch_size=image_patch_size, return_video_metadata=True)
-        return images, videos
+        # Get video config parameters (aligned with fetch_video parameters)
+        # Config uses: min_pixels, max_pixels, total_pixels, max_frames, fps
+        min_pixels = config.get("min_pixels", None)
+        max_pixels = config.get("max_pixels", None)
+        total_pixels = config.get("total_pixels", None)
+        max_frames = config.get("max_frames", None)
+        fps = config.get("fps", None)
+
+        images = []
+        videos = []
+
+        for message in messages:
+            content = message.get("content", [])
+            if isinstance(content, str):
+                continue
+
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+
+                item_type = item.get("type")
+                if item_type == "image":
+                    image = item.get("image")
+                    if image is not None:
+                        processed_image = process_image(image, image_patch_size=image_patch_size)
+                        images.append(processed_image)
+                elif item_type == "video":
+                    video = item.get("video")
+                    if video is not None:
+                        # Build video dict for process_video with additional parameters
+                        # This aligns with visual_dict format used in _build_messages
+                        video_dict = {"video": video}
+                        # Copy optional parameters from item (item may already contain these from _build_messages)
+                        for key in ["fps", "nframes", "min_frames", "max_frames", "min_pixels", "max_pixels", "total_pixels"]:
+                            if key in item:
+                                video_dict[key] = item[key]
+
+                        video_tensor, video_metadata = process_video(
+                            video_dict,
+                            image_patch_size=image_patch_size,
+                            min_pixels=min_pixels,
+                            max_pixels=max_pixels,
+                            total_pixels=total_pixels,
+                            max_frames=max_frames,
+                            fps=fps,
+                            return_video_metadata=True,
+                        )
+                        videos.append((video_tensor, video_metadata))
+
+        return images if images else None, videos if videos else None
 
 
 def get_dataset_class(data_config: DictConfig):

@@ -34,7 +34,7 @@ from vllm.entrypoints.openai.api_server import (
     build_app,
     init_app_state,
 )
-from vllm.inputs import TokensPrompt
+from vllm.inputs import TextPrompt, TokensPrompt
 from vllm.lora.request import LoRARequest
 from vllm.outputs import RequestOutput
 from vllm.usage.usage_lib import UsageContext
@@ -195,7 +195,19 @@ class vLLMHttpServerBase:
 
         self.config: RolloutConfig = omega_conf_to_dataclass(config)
         self.model_config: HFModelConfig = omega_conf_to_dataclass(model_config, dataclass_type=HFModelConfig)
-        self.config.max_model_len = self.model_config.hf_config.max_position_embeddings
+        # Try to get max_model_len from hf_config, with fallback for VL models like Qwen3VL
+        hf_config = self.model_config.hf_config
+        if hasattr(hf_config, "max_position_embeddings"):
+            self.config.max_model_len = hf_config.max_position_embeddings
+        elif hasattr(hf_config, "text_config") and hasattr(hf_config.text_config, "max_position_embeddings"):
+            # For VL models, max_position_embeddings may be in text_config
+            self.config.max_model_len = hf_config.text_config.max_position_embeddings
+        else:
+            # Keep the existing max_model_len from config if no attribute found
+            logger.warning(
+                f"Could not find max_position_embeddings in hf_config, "
+                f"using existing max_model_len: {self.config.max_model_len}"
+            )
         self.rollout_mode = rollout_mode
         self.workers = workers
 
@@ -459,16 +471,31 @@ class vLLMHttpServerBase:
 
     async def generate(
         self,
-        prompt_ids: list[int],
+        prompt_ids: list[int] | str,
         sampling_params: dict[str, Any],
         request_id: str,
         image_data: Optional[list[Any]] = None,
         video_data: Optional[list[Any]] = None,
     ) -> TokenOutput:
-        """Generate sequence with token-in-token-out."""
+        """Generate sequence with token-in-token-out or text-in-token-out.
+
+        Args:
+            prompt_ids: Either a list of token ids or a text string prompt.
+                       For VL models like Qwen3VL with video, use text prompt
+                       to let vLLM handle multi-modal tokenization internally.
+        """
+        # Determine if we're using text prompt (for VL models with video)
+        use_text_prompt = isinstance(prompt_ids, str)
+
         # Calculate the maximum possible new tokens based on available context space
         # This serves as a safety upper bound
-        max_possible_tokens = self.config.max_model_len - len(prompt_ids)
+        if use_text_prompt:
+            # For text prompts, estimate token count (will be more accurate after tokenization)
+            # Use a conservative estimate based on max_model_len
+            estimated_prompt_len = len(prompt_ids) // 4  # rough estimate
+            max_possible_tokens = self.config.max_model_len - estimated_prompt_len
+        else:
+            max_possible_tokens = self.config.max_model_len - len(prompt_ids)
         if max_possible_tokens < 0:
             raise ValueError(
                 f"Prompt length ({len(prompt_ids)}) exceeds the model's maximum context length "
@@ -494,14 +521,20 @@ class vLLMHttpServerBase:
         sampling_params["logprobs"] = 0 if sampling_params.pop("logprobs", False) else None
         sampling_params.setdefault("repetition_penalty", self.config.get("repetition_penalty", 1.0))
         sampling_params = SamplingParams(max_tokens=max_tokens, **sampling_params)
-        prompt_ids = _qwen2_5_vl_dedup_image_tokens(prompt_ids, self.model_config.processor)
+
         multi_modal_data = {}
         if image_data is not None:
             multi_modal_data["image"] = image_data
         if video_data is not None:
             multi_modal_data["video"] = video_data
 
-        prompt = TokensPrompt(prompt_token_ids=prompt_ids, multi_modal_data=multi_modal_data)
+        # Use TextPrompt for VL models with video (e.g., Qwen3VL) to let vLLM handle
+        # multi-modal tokenization internally; otherwise use TokensPrompt
+        if use_text_prompt:
+            prompt = TextPrompt(prompt=prompt_ids, multi_modal_data=multi_modal_data if multi_modal_data else None)
+        else:
+            prompt_ids = _qwen2_5_vl_dedup_image_tokens(prompt_ids, self.model_config.processor)
+            prompt = TokensPrompt(prompt_token_ids=prompt_ids, multi_modal_data=multi_modal_data)
 
         # Add lora request
         lora_request = None
@@ -512,6 +545,8 @@ class vLLMHttpServerBase:
                 lora_request = LoRARequest(
                     lora_name=VLLM_LORA_NAME, lora_int_id=VLLM_LORA_INT_ID, lora_path=VLLM_LORA_PATH
                 )
+
+        # breakpoint()
 
         generator = self.engine.generate(
             prompt=prompt, sampling_params=sampling_params, request_id=request_id, lora_request=lora_request

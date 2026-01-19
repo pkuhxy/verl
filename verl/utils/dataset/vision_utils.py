@@ -66,12 +66,29 @@ def process_video(
     fps: Optional[float] = None,
     fps_min_frames: Optional[int] = None,
     fps_max_frames: Optional[int] = None,
+    min_pixels: Optional[int] = None,
+    max_pixels: Optional[int] = None,
+    total_pixels: Optional[int] = None,
+    max_frames: Optional[int] = None,
     return_video_sample_fps: bool = False,
     return_video_metadata: bool = False,
 ) -> torch.Tensor:
     """Converts a video dict into a [n_frames, 3, H, W] tensor
 
-    Add video sample FPS in a future MR
+    Args:
+        video: Video dict containing video path or frames.
+        image_patch_size: Patch size for image processing.
+        nframes: Number of frames to sample (mutually exclusive with fps).
+        fps: Frames per second for sampling (mutually exclusive with nframes).
+        fps_min_frames: Minimum frames when using fps sampling.
+        fps_max_frames: Maximum frames when using fps sampling.
+        min_pixels: Minimum total pixels for the video.
+        max_pixels: Maximum total pixels for the video to control vision token count.
+            This limits the video resolution/frames to control memory usage.
+        total_pixels: Total pixels budget for the video.
+        max_frames: Maximum number of frames to extract.
+        return_video_sample_fps: Whether to return the sample fps.
+        return_video_metadata: Whether to return video metadata.
     """
 
     if not isinstance(video, dict) or "video" not in video:
@@ -91,6 +108,22 @@ def process_video(
                 video["min_frames"] = fps_min_frames
             if fps_max_frames is not None:
                 video["max_frames"] = fps_max_frames
+
+    # Add min_pixels to control vision token count if specified
+    if min_pixels is not None and "min_pixels" not in video:
+        video["min_pixels"] = min_pixels
+
+    # Add max_pixels to control vision token count if specified
+    if max_pixels is not None and "max_pixels" not in video:
+        video["max_pixels"] = max_pixels
+
+    # Add total_pixels to control vision token count if specified
+    if total_pixels is not None and "total_pixels" not in video:
+        video["total_pixels"] = total_pixels
+
+    # Add max_frames if specified (overrides fps_max_frames for frame extraction)
+    if max_frames is not None and "max_frames" not in video:
+        video["max_frames"] = max_frames
 
     return fetch_video(
         video,

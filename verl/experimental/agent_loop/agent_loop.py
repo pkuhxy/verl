@@ -96,16 +96,18 @@ class AsyncLLMServerManager:
         self,
         request_id,
         *,
-        prompt_ids: list[int],
+        prompt_ids: list[int] | str,
         sampling_params: dict[str, Any],
         image_data: Optional[list[Any]] = None,
         video_data: Optional[list[Any]] = None,
     ) -> TokenOutput:
-        """Generate tokens from prompt ids.
+        """Generate tokens from prompt ids or text prompt.
 
         Args:
             request_id (str): request id for sticky session.
-            prompt_ids (List[int]): List of prompt token ids.
+            prompt_ids (List[int] | str): List of prompt token ids, or a text prompt string.
+                For VL models like Qwen3VL with video, use text prompt to let vLLM
+                handle multi-modal tokenization internally.
             sampling_params (Dict[str, Any]): Sampling parameters for the chat completion.
 
         Returns:
@@ -250,6 +252,7 @@ class AgentLoopBase(ABC):
         images: list[Image.Image] = None,
         videos: list[tuple[torch.Tensor, dict]] = None,
         remove_system_prompt: bool = False,
+        return_text: bool = False,
     ):
         """Apply chat template to messages with optional tools, images, and videos.
 
@@ -259,9 +262,12 @@ class AgentLoopBase(ABC):
             images (list[Image.Image], optional): Input images. Defaults to None.
             videos (list[tuple[torch.Tensor, dict]], optional): Input videos. Defaults to None.
             remove_system_prompt (bool, optional): Whether to remove system prompt. Defaults to False.
+            return_text (bool, optional): Whether to return text prompt instead of token ids.
+                For VL models like Qwen3VL with video, set to True to let vLLM handle
+                multi-modal tokenization internally. Defaults to False.
 
         Returns:
-            list[int]: Prompt token ids.
+            list[int] | str: Prompt token ids, or text prompt if return_text is True.
         """
         if self.processor is not None:
             raw_prompt = await self.loop.run_in_executor(
@@ -275,23 +281,34 @@ class AgentLoopBase(ABC):
                 ),
             )
 
+            # If return_text is True, return the raw text prompt directly
+            # This is used for VL models like Qwen3VL with video to let vLLM
+            # handle multi-modal tokenization internally
+            if return_text:
+                return raw_prompt
+
             # split the videos and according metadatas
             if videos is not None:
-                videos, video_metadatas = zip(*videos, strict=False)
-                videos, video_metadatas = list(videos), list(video_metadatas)
+                videos, video_metadata = zip(*videos, strict=False)
+                videos, video_metadata = list(videos), list(video_metadata)
             else:
-                video_metadatas = None
+                video_metadata = None
+
+            # breakpoint()
 
             model_inputs = self.processor(
                 text=[raw_prompt],
                 images=images,
                 videos=videos,
-                video_metadatas=video_metadatas,
+                video_metadata=video_metadata,
                 return_tensors="pt",
                 do_sample_frames=False,
             )
             prompt_ids = model_inputs.pop("input_ids").squeeze(0).tolist()
+
+            # prompt_ids = self.processor.tokenizer.encode(raw_prompt, add_special_tokens=False)
         else:
+
             prompt_ids = await self.loop.run_in_executor(
                 None,
                 lambda: self.tokenizer.apply_chat_template(
@@ -641,16 +658,16 @@ class AgentLoopWorkerBase:
         videos = output.multi_modal_data.get("videos")
         # split the videos and according metadatas
         if videos is not None:
-            videos, video_metadatas = zip(*videos, strict=False)
-            videos, video_metadatas = list(videos), list(video_metadatas)
+            videos, video_metadata = zip(*videos, strict=False)
+            videos, video_metadata = list(videos), list(video_metadata)
         else:
-            video_metadatas = None
+            video_metadata = None
         current_text = self.tokenizer.decode(input_ids.squeeze(0), skip_special_tokens=True)
         multi_modal_inputs = self.processor(
             text=[current_text],
             images=images,
             videos=videos,
-            video_metadatas=video_metadatas,
+            video_metadata=video_metadata,
             return_tensors="pt",
             do_sample_frames=False,
         )
@@ -669,6 +686,8 @@ class AgentLoopWorkerBase:
 
         image_grid_thw = multi_modal_inputs.get("image_grid_thw")
         video_grid_thw = multi_modal_inputs.get("video_grid_thw")
+
+        # breakpoint()
 
         # Model's get_rope_index has been dynamically bind to the processor.
         vision_position_ids, _ = self.processor.get_rope_index(

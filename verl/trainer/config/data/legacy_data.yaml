@@ -70,6 +70,9 @@ dataloader_num_workers: 8
 # image patch size
 image_patch_size: 14
 
+# maximum number of tokens to be used for the image.
+max_pixels: 786432
+
 # Whether to shuffle the validation set.
 validation_shuffle: False
 
@@ -91,6 +94,10 @@ image_key: images
 # The field in the multi-modal dataset where the video is located.
 video_key: videos
 
+total_pixels: 117964800
+min_pixels: 131072
+max_frames: 768
+fps: 1
 # If the remote tokenizer has a Python file, this flag determines whether to allow using it.
 trust_remote_code: False
 

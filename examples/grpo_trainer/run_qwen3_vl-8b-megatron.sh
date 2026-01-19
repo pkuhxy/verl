@@ -12,6 +12,9 @@ export CUDA_DEVICE_MAX_CONNECTIONS=1 # For megatron communication/computation ov
 
 export VLLM_ALLREDUCE_USE_SYMM_MEM=0 # for vllm0.11.0 with TP
 
+# Disable Ray runtime_env working_dir to avoid Runtime Env Agent issues
+export RAY_RUNTIME_ENV_WORKING_DIR_ENABLE=0
+
 
 HF_MODEL_PATH=${HF_MODEL_PATH:-"${RAY_DATA_HOME}/models/Qwen3-VL-8B-Instruct"}
 
@@ -20,8 +23,8 @@ CP=${CP:-2}
 TP=${TP:-2}
 PP=${PP:-2}
 
-train_path=$HOME/data/geo3k/train.parquet
-test_path=$HOME/data/geo3k/test.parquet
+train_path=/apdcephfs_nj7/share_1220751/xianyihe/dataset/tyzhu/geo3k/data/geo3k/train.parquet
+test_path=/apdcephfs_nj7/share_1220751/xianyihe/dataset/tyzhu/geo3k/data/geo3k/test.parquet
 
 python3 -m verl.trainer.main_ppo --config-path=config \
     --config-name='ppo_megatron_trainer.yaml'\
@@ -33,6 +36,8 @@ python3 -m verl.trainer.main_ppo --config-path=config \
     data.max_response_length=2048 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
+    ray_kwargs.ray_init.num_cpus=32 \
+    +ray_kwargs.ray_init._temp_dir=/tmp/ray_temp_$ \
     actor_rollout_ref.model.path=$HF_MODEL_PATH \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=128 \
