@@ -234,6 +234,9 @@ class AgentLoopBase(ABC):
             dict: Multi-modal data with keys "images" and "videos".
         """
         multi_modal_data = {}
+
+        # breakpoint()
+
         if self.processor is not None:
             images, videos = await self.dataset_cls.process_vision_info(
                 messages, image_patch_size=self.processor.image_processor.patch_size, config=self.dataset_config
@@ -557,11 +560,33 @@ class AgentLoopWorkerBase:
         #   e.g., [0,0,0,0,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,0,0,0,0]
 
         # TODO(wuxibin): remove padding and use tensordict.
+        # Truncate prompt_ids if it exceeds prompt_length (tokenizer.pad does not truncate)
+        prompt_length = self.config.actor_rollout_ref.rollout.prompt_length
+        prompt_ids_to_pad = output.prompt_ids
+        if len(prompt_ids_to_pad) > prompt_length:
+            # Decode and print the response for debugging
+            try:
+                response_text = self.tokenizer.decode(output.response_ids, skip_special_tokens=False)
+                prompt_text = self.tokenizer.decode(output.prompt_ids, skip_special_tokens=False)
+                logger.warning(
+                    f"[OVERLONG CASE] Prompt length {len(prompt_ids_to_pad)} exceeds max prompt_length {prompt_length}, "
+                    f"truncating from left.\n"
+                    f"  - Response IDs length: {len(output.response_ids)}\n"
+                    f"  - Response text : {response_text}\n"
+                    f"  - Prompt text : {prompt_text}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Prompt length {len(prompt_ids_to_pad)} exceeds max prompt_length {prompt_length}, "
+                    f"truncating from left. (Failed to decode: {e})"
+                )
+            prompt_ids_to_pad = prompt_ids_to_pad[-prompt_length:]
+
         self.tokenizer.padding_side = "left"
         prompt_output = self.tokenizer.pad(
-            {"input_ids": output.prompt_ids},
+            {"input_ids": prompt_ids_to_pad},
             padding="max_length",
-            max_length=self.config.actor_rollout_ref.rollout.prompt_length,
+            max_length=prompt_length,
             return_tensors="pt",
             return_attention_mask=True,
         )
@@ -630,6 +655,8 @@ class AgentLoopWorkerBase:
             position_ids=position_ids,
             kwargs=kwargs,
         )
+
+        # breakpoint()
 
         return _InternalAgentLoopOutput(
             prompt_ids=prompt_output["input_ids"],

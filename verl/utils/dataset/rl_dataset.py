@@ -114,9 +114,9 @@ class RLHFDataset(Dataset):
         self.filter_overlong_prompts = config.get("filter_overlong_prompts", True)
         self.apply_chat_template_kwargs = config.get("apply_chat_template_kwargs", {})
 
-        self.video_total_pixels = config.get("video_total_pixels", 115200 * 32 * 32)
-        self.video_max_pixels = config.get("video_max_pixels", 768 * 32 * 32)
-        self.video_min_pixels = config.get("video_min_pixels", 128 * 32 * 32)
+        self.total_pixels = config.get("total_pixels", 115200 * 32 * 32)
+        self.max_pixels = config.get("max_pixels", 768 * 32 * 32)
+        self.min_pixels = config.get("min_pixels", 128 * 32 * 32)
         self.max_frames = config.get("max_frames", 768)
         self.fps = config.get("fps", 1.0)
 
@@ -185,6 +185,8 @@ class RLHFDataset(Dataset):
         self.dataframe = self.maybe_filter_out_long_prompts(self.dataframe)
 
     def maybe_filter_out_long_prompts(self, dataframe: datasets.Dataset = None):
+
+    
         # filter out too long prompts
         if self.filter_overlong_prompts:
             tokenizer = self.tokenizer
@@ -198,7 +200,14 @@ class RLHFDataset(Dataset):
 
                 def doc2len(doc) -> int:
                     try:
+                        
+                        # print(f"Processing doc: {doc}")
+
+                        # import pdb;pdb.set_trace()
+
                         messages = self._build_messages(doc)
+
+                        # print(messages)
                         # pass tool schemas if available so the processor can format prompts
                         apply_kwargs = dict(**self.apply_chat_template_kwargs)
                         if self.tool_schemas is not None:
@@ -207,6 +216,9 @@ class RLHFDataset(Dataset):
                         raw_prompt = self.processor.apply_chat_template(
                             messages, add_generation_prompt=True, tokenize=False, **apply_kwargs
                         )
+
+                        # print(raw_prompt)
+
                         if image_key in doc and doc[image_key]:
                             images = [
                                 process_image(image, image_patch_size=self.image_patch_size) for image in doc[image_key]
@@ -214,28 +226,52 @@ class RLHFDataset(Dataset):
                         else:
                             images = None
 
-                        if video_key in doc and doc[video_key]:
-                            videos, video_metadata = zip(
-                                *[
-                                    process_video(
-                                        video, image_patch_size=self.image_patch_size, return_video_metadata=True
+                        # print(video_key)
+                        # print(f"Processing doc 2: {doc}")
+
+                        if video_key in doc.keys() and doc[video_key]:
+
+                            # print(video_key)
+
+                            video_dict = {'video':doc[video_key][0]}
+
+
+
+                            videos, video_metadata = process_video(
+                                        video_dict,
+                                        image_patch_size=self.image_patch_size,
+                                        min_pixels=self.min_pixels,
+                                        max_pixels=self.max_pixels,
+                                        total_pixels=self.total_pixels,
+                                        max_frames=self.max_frames,
+                                        fps=self.fps,
+                                        return_video_metadata=True,
                                     )
-                                    for video in doc[video_key]
-                                ],
-                                strict=True,
-                            )
-                            videos = list(videos)
-                            video_metadata = list(video_metadata)
-                            videos_kwargs = {"video_metadata": video_metadata, "do_sample_frames": False}
+                            # videos = list(videos)
+                            # video_metadata = list(video_metadata)
                         else:
                             videos = None
-                            videos_kwargs = {}
+                            video_metadata = None
 
-                        return len(
-                            processor(text=[raw_prompt], images=images, videos=videos, videos_kwargs=videos_kwargs)[
-                                "input_ids"
-                            ][0]
-                        )
+                        # print(videos)
+
+                        inputs = processor(
+                                text=[raw_prompt],
+                                images=images,
+                                videos=videos,
+                                video_metadata=video_metadata,
+                                do_sample_frames=False,
+                            )
+
+                        prompt_len = len(inputs["input_ids"][0])
+
+                        print(f"Prompt length: {prompt_len}")
+
+                        # breakpoint()
+
+                        if prompt_len > self.max_prompt_length:
+                            print(f"[FILTER] Prompt length {prompt_len} > max_prompt_length {self.max_prompt_length}, will be filtered out")
+                        return prompt_len
                     except Exception:
                         print("Error processing one of the samples, skipping...")
                         traceback.print_exc()
@@ -256,6 +292,8 @@ class RLHFDataset(Dataset):
                         print("Error processing one of the samples, skipping...")
                         traceback.print_exc()
                         return self.max_prompt_length + 1
+
+            
 
             dataframe = dataframe.filter(
                 lambda doc: doc2len(doc) <= self.max_prompt_length,
@@ -300,9 +338,14 @@ class RLHFDataset(Dataset):
         Returns:
             messages: List of messages with replaced placeholder.
         """
-        messages: list = example[self.prompt_key]
-        images = example.pop(self.image_key, [])
-        videos = example.pop(self.video_key, [])
+
+        example_cp = example.copy()
+
+        messages: list = example_cp[self.prompt_key]
+        images = example_cp.pop(self.image_key, [])
+        videos = example_cp.pop(self.video_key, [])
+
+        # breakpoint()
 
         image_offset, video_offset = 0, 0
         for message in messages:
@@ -332,9 +375,9 @@ class RLHFDataset(Dataset):
                     visual_dict = {
                         "type": "video",
                         "video": videos[video_offset],
-                        "min_pixels": self.video_min_pixels,
-                        "max_pixels": self.video_max_pixels,
-                        "total_pixels": self.video_total_pixels,
+                        "min_pixels": self.min_pixels,
+                        "max_pixels": self.max_pixels,
+                        "total_pixels": self.total_pixels,
                         "max_frames": self.max_frames,
                         "fps": self.fps,
                     }

@@ -31,6 +31,13 @@ PPO_RAY_RUNTIME_ENV = {
         # https://docs.vllm.ai/en/latest/usage/troubleshooting.html?h=nccl_cumem_enable#known-issues
         # https://github.com/vllm-project/vllm/blob/c6b0a7d3ba03ca414be1174e9bd86a97191b7090/vllm/worker/worker_base.py#L445
         "NCCL_CUMEM_ENABLE": "0",
+        # Additional settings to disable CUDA symmetric memory to avoid overlap allocation conflicts
+        # in multi-node TP scenarios
+        "NCCL_SYMM_MEM_ENABLE": "0",
+        "VLLM_DISABLE_COMPILE_SAMPLER": "1",
+        # Disable symmetric memory communicator to fix multi-node TP overlap allocation error
+        "VLLM_USE_TRITON_FLASH_ATTN": "0",
+        "VLLM_DISABLED_KERNELS": "SymmMemAllReduce",
     },
 }
 
