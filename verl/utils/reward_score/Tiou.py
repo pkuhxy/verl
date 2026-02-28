@@ -43,13 +43,17 @@ def compute_score(predict_str: str, ground_truth: str, format_score: float = 0.0
     
     # 4. 根据覆盖情况调整 IoU 得分
     # 如果预测范围完全包含 ground truth，给予额外奖励
-    if is_covering:
-        adjusted_iou = iou * (1.0 + coverage_bonus)
-    else:
-        adjusted_iou = iou
+    # if is_covering:
+    #     adjusted_iou = iou + 0.5
+    #     # adjusted_iou = iou * (1.0 + coverage_bonus)
+    # else:
+    #     adjusted_iou = iou
     
-    # 确保分数不超过 1.0
-    adjusted_iou = min(adjusted_iou, 1.0)
+    # # 确保分数不超过 1.0
+    # # adjusted_iou = min(adjusted_iou, 1.0)
+    # adjusted_iou = min(adjusted_iou, 1.0)
+    
+    adjusted_iou = iou
     
     # 5. 计算最终得分
     # 逻辑：总分 = (1 - 权重) * IoU得分 + 权重 * 格式得分(1.0)
@@ -94,8 +98,22 @@ def acc_reward_iou(result, ground_truth: str) -> tuple:
     
     iou = intersection / union
     
+    # # 将 IoU 离散化为 0、0.2、0.4、0.6、0.8、1.0 六个档位（向上取整）
+    # if iou <= 0:
+    #     iou = 0.0
+    # elif iou <= 0.2:
+    #     iou = 0.2
+    # elif iou <= 0.4:
+    #     iou = 0.4
+    # elif iou <= 0.6:
+    #     iou = 0.6
+    # elif iou <= 0.8:
+    #     iou = 0.8
+    # else:
+    #     iou = 1.0
+    
     # 判断预测范围是否完全包含 ground truth
     # 即 pred_start <= gt_start 且 pred_end >= gt_end
     is_covering = (pred_start <= gt_start + 1e-9) and (pred_end >= gt_end - 1e-9)
-    
+
     return iou, is_covering

@@ -109,6 +109,11 @@ def default_compute_score(
 
         res = Tiou.compute_score(solution_str, ground_truth)
 
+    elif data_source in ["vtg_stage2"]:
+        from . import VTG_stage2
+
+        res = VTG_stage2.compute_score(solution_str, ground_truth, extra_info)
+
     else:
         raise NotImplementedError(f"Reward function is not implemented for {data_source=}")
 

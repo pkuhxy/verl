@@ -156,6 +156,14 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> dict[str,
     else:
         raise ValueError("All samples are aborted, this should not happen.")
 
+    # compute quantile rewards
+    quantiles = [0.1, 0.25, 0.5, 0.75, 0.9]
+    reward_quantile_metrics = {}
+    if non_aborted_sequence_reward.numel() > 0:
+        for q in quantiles:
+            q_val = torch.quantile(non_aborted_sequence_reward.float(), q).detach().item()
+            reward_quantile_metrics[f"critic/rewards/quantile_{q}"] = q_val
+
     metrics = {
         # score
         "critic/score/mean": score_mean,
@@ -165,6 +173,8 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> dict[str,
         "critic/rewards/mean": reward_mean,
         "critic/rewards/max": reward_max,
         "critic/rewards/min": reward_min,
+        # reward quantiles
+        **reward_quantile_metrics,
         # adv
         "critic/advantages/mean": torch.mean(valid_adv).detach().item(),
         "critic/advantages/max": torch.max(valid_adv).detach().item(),

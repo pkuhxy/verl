@@ -704,7 +704,13 @@ def compute_gpg_outcome_advantage(
                 id2std[idx] = torch.tensor(1.0)
             elif len(id2score[idx]) > 1:
                 scores_tensor = torch.stack(id2score[idx])
-                id2mean[idx] = torch.mean(scores_tensor)
+                # id2mean[idx] = torch.mean(scores_tensor)
+                quantile_k = config.get("quantile_k", -1.0) if config else -1.0
+                if 0 < quantile_k < 1:
+                    id2mean[idx] = torch.quantile(scores_tensor, quantile_k, interpolation='nearest')
+                else:
+                    id2mean[idx] = torch.mean(scores_tensor)
+
                 id2std[idx] = torch.std(scores_tensor)
             else:
                 raise ValueError(f"no score in prompt index: {idx}")
